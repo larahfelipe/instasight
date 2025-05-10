@@ -5,6 +5,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.remote.webdriver import WebDriver
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,82 +54,97 @@ class Account:
         return self._not_following_back
 
 
-def get_base_url() -> str:
-    """Returns the base URL for Instagram."""
-    return "https://www.instagram.com"
+class Browser:
+    def __init__(self, driver: WebDriver, base_url: str):
+        self.driver = driver
+        self.base_url = base_url
 
-def navigate(path: str) -> None:
-    """Navigates to a specific path on Instagram."""
-    if not path.endswith("/"):
-        path += "/"
-    url = get_base_url() + path
-    logger.info(f"Navigating to {url}")
-    browser.get(url)
+    def __getattr__(self, name):
+        return getattr(self.driver, name)
 
-def login(account_username: str, account_password: str) -> bool:
-    """Logs into Instagram using the provided credentials."""
-    try:
-        navigate("/accounts/login/")
-        time.sleep(5)
-        logger.info("Attempting to log in...")
-        username_input = browser.find_element(By.NAME, "username")
-        password_input = browser.find_element(By.NAME, "password")
-        username_input.send_keys(account_username)
-        password_input.send_keys(account_password + Keys.RETURN)
-        time.sleep(10)
+    def close(self) -> None:
+        """Closes the browser and cleans up cookies."""
+        logger.info("Closing browser and cleaning up...")
+        self.driver.delete_all_cookies()
+        self.driver.quit()
+
+    def get_base_url(self) -> str:
+        """Returns the base URL"""
+        return self.base_url
+
+    def navigate(self, path: str) -> None:
+        """Navigates to a specific path on Instagram."""
+        if not path.endswith("/"):
+            path += "/"
+        url = self.get_base_url() + path
+        logger.info(f"Navigating to {url}")
+        self.driver.get(url)
+
+
+class Instasight:
+    def __init__(self, browser: Browser, account: Account):
+        self.browser = browser
+        self.account = account
+
+    def login(self) -> bool:
+        """Logs into Instagram using the provided credentials."""
         try:
-            mfa_input = browser.find_element(By.NAME, "verificationCode")
-            mfa_code = input("Enter the 2FA code: ")
-            mfa_input.send_keys(mfa_code + Keys.RETURN)
+            self.browser.navigate("/accounts/login/")
             time.sleep(5)
-        except NoSuchElementException:
-            logger.info("2FA not required.")
-        logger.info("Login successful.")
-        return True
-    except NoSuchElementException as e:
-        logger.error(f"Login failed: {e}")
-        return False
+            logger.info("Attempting to log in...")
+            username_input = self.browser.find_element(By.NAME, "username")
+            password_input = self.browser.find_element(By.NAME, "password")
+            username_input.send_keys(self.account.get_username())
+            password_input.send_keys(self.account.get_password() + Keys.RETURN)
+            time.sleep(10)
+            try:
+                mfa_input = browser.find_element(By.NAME, "verificationCode")
+                mfa_code = input("Enter the 2FA code: ")
+                mfa_input.send_keys(mfa_code + Keys.RETURN)
+                time.sleep(5)
+            except NoSuchElementException:
+                logger.info("2FA not required.")
+            logger.info("Login successful.")
+            return True
+        except NoSuchElementException as e:
+            logger.error(f"Login failed: {e}")
+            return False
 
-def fetch_users(account_username: str, from_collection: Literal["following", "followers"]) -> None:
-    try:
-        navigate(f"/{account_username}")
-        time.sleep(5)
-        logger.info(f"Fetching users from {from_collection}...")
+    def fetch_users(self, from_collection: Literal["following", "followers"]) -> None:
+        """Fetches the Instagram users from a given collection (followings or followers)."""
         try:
-            collection_link = browser.find_element(By.PARTIAL_LINK_TEXT, from_collection)
-        except NoSuchElementException:
-            collection_link = browser.find_element(By.XPATH, f'//a[@href="{get_base_url()}/{account_username}/{from_collection}"]')
-        if not collection_link:
-            raise Exception(f'"{from_collection}" collection not found. Please try again later.')
-        collection_link.click()
-        time.sleep(5)
-        collection_dialog = browser.find_element(By.XPATH, "//div[@role='dialog']//ul")
-        if not collection_dialog:
-            collection_link.send_keys(Keys.RETURN)
-        for _ in range(10):
-            browser.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", collection_dialog)
-            time.sleep(2)
-            users_chunk = collection_dialog.find_elements(By.TAG_NAME, "a")
-            usernames = [u.text for u in users_chunk if u.text.strip()]
-            account.add_users_to_collection(usernames, from_collection)
-        logger.info(f'Fetched {account.get_total_from_collection(from_collection)} user(s) from "{from_collection}".')
-    except Exception as e:
-        logger.error(f'Error fetching users from "{from_collection}" collection: {e}')
+            self.browser.navigate(f"/{self.account.get_username()}")
+            time.sleep(5)
+            logger.info(f"Fetching users from {from_collection}...")
+            try:
+                collection_link = self.browser.find_element(By.PARTIAL_LINK_TEXT, from_collection)
+            except NoSuchElementException:
+                collection_link = self.browser.find_element(By.XPATH, f'//a[@href="{self.browser.get_base_url()}/{self.account.get_username()}/{from_collection}"]')
+            if not collection_link:
+                raise Exception(f'"{from_collection}" collection not found. Please try again later.')
+            collection_link.click()
+            time.sleep(5)
+            collection_dialog = self.browser.find_element(By.XPATH, "//div[@role='dialog']//ul")
+            if not collection_dialog:
+                collection_link.send_keys(Keys.RETURN)
+            for _ in range(10):
+                self.browser.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", collection_dialog)
+                time.sleep(2)
+                users_chunk = collection_dialog.find_elements(By.TAG_NAME, "a")
+                usernames = [u.text for u in users_chunk if u.text.strip()]
+                self.account.add_users_to_collection(usernames, from_collection)
+            logger.info(f'Fetched {self.account.get_total_from_collection(from_collection)} user(s) from "{from_collection}".')
+        except Exception as e:
+            logger.error(f'Error fetching users from "{from_collection}" collection: {e}')
 
-def close() -> None:
-    """Closes the browser and cleans up cookies."""
-    logger.info("Closing browser and cleaning up...")
-    browser.delete_all_cookies()
-    browser.quit()
-
-def save_to_file(filename: str, data: list[str]) -> None:
-    """Saves a list of strings to a text file."""
-    try:
-        with open(filename, "w") as file:
-            file.write("\n".join(data))
-        logger.info(f"Data successfully written to {filename}")
-    except Exception as e:
-        logger.error(f"Failed to write to {filename}: {e}")
+    def save_to_file(self, filename: str, data: list[str]) -> None:
+        """Saves a list of strings to a text file."""
+        try:
+            with open(filename, "w") as file:
+                file.write("\n".join(data))
+            logger.info(f"Data successfully written to {filename}")
+        except Exception as e:
+            logger.error(f"Failed to write to {filename}: {e}")
 
 
 if __name__ == "__main__":
@@ -137,15 +153,16 @@ if __name__ == "__main__":
             input("Enter your username: ").strip(),
             input("Enter your password: ").strip()
         )
-        browser = webdriver.Chrome()
-        if not login(account.get_username(), account.get_password()):
+        browser = Browser(webdriver.Chrome(), "https://www.instagram.com")
+        app = Instasight(browser, account)
+        if not app.login():
             raise Exception("Authentication failed. Please try again later.")
-        fetch_users(account.get_username(), "followers")
-        fetch_users(account.get_username(), "following")
-        save_to_file("not_followed_by.txt", account.eval_not_followed_by())
-        save_to_file("not_following_back.txt", account.eval_not_following_back())
-        logger.info("Analysis successfully completed! Results saved to text files.")
+        app.fetch_users(account.get_username(), "followers")
+        app.fetch_users(account.get_username(), "following")
+        app.save_to_file("not_followed_by.txt", account.eval_not_followed_by())
+        app.save_to_file("not_following_back.txt", account.eval_not_following_back())
+        logger.info("Analysis successfully completed. Results saved to text files.")
     except Exception as e:
         logger.error(f"An error occurred during runtime: {e}")
     finally:
-        close()
+        browser.close()
